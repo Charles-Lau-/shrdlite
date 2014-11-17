@@ -1,0 +1,288 @@
+import nltk
+import types
+import json
+import sys
+#global variable,result contains all data that a goal needs
+#global variable,we use coordinate to discribe the world and use d_world to represent it
+result={}
+d_world=[]
+world=[]
+world_objects=[]
+
+#relatioon: on,inside,beside etc.
+#relative_coordinate: the coordinate of object after on,inside or beside etc.
+def realize_the_world(coordinates,world,objects):
+      map_to_real_world=[]
+      if(coordinates==d_world[-1]):
+            map_to_real_world.append("the floor")
+            return map_to_real_world
+      for coord in coordinates:
+            co=coord.split(",")
+            obj=world[int(co[0])-1][int(co[1])-1]
+            discript=objects.get(obj)
+            signature=discript.get("size","")
+            signature=signature+" "+discript.get("color","")
+            signature=signature+" "+discript.get("form","")
+            signature=signature.split(" ")  
+            map_to_real_world=len(map_to_real_world)==0 and signature or intersect(map_to_real_world,signature)  
+      
+      for obj in objects:
+            duscript=objects.get(obj) 
+            if(map_to_real_world.count(discript.get("form"))!=0):
+                  return map_to_real_world
+      map_to_real_world.append("object")
+      return map_to_real_world
+def deal_with_relation(relation,relative_coordinate):
+      index=0
+      coord=list(relative_coordinate)
+      if(relation.startswith("on") or relation.startswith("above") or relation.startswith("in")):
+             
+            for i in coord:
+                  co=i.split(",")
+                  co[1]=str(int(co[1])+1)
+                  coord[index]=(co[0]+","+co[1])
+                  index+=1
+                 
+            return coord
+      elif(relation.startswith("under")):
+            for i in coord:
+                  co=i.split(",")
+                  co[1]=str(int(co[1])-1)
+                  coord[index]=(co[0]+","+co[1])
+                  index+=1
+            return coord
+      elif(relation.find("left")>=0):
+            for i in coord:
+                  co=i.split(",")
+                  co[0]=str(int(co[0])-1)
+                  coord[index]=(co[0]+","+co[1])
+                  index+=1
+            return coord
+      elif(relation.find("right")>=0):
+            for i in coord:
+                  co=i.split(",")
+                  co[0]=str(int(co[0])+1)
+                  coord[index]=(co[0]+","+co[1])
+                  index+=1
+            return coord
+      elif(relation.startswith("beside")):
+            be_coord=[]
+            for i in coord:
+                  co=i.split(",")
+                  be_coord.append((str(int(co[0])-1)+","+co[1]))
+                  be_coord.append((str(int(co[0])+1)+","+co[1]))
+                  index+=1
+            return be_coord
+#return the intersection of two coordinate array.
+#Like arr1=[(1,2),(2,3)],arr2=[(1,2),(2,4)],we get(1,2)
+def intersect(arr1,arr2):
+      intersection=[];
+      if(len(arr1)==0 or len(arr2)==0):
+            return len(arr1)==0 and arr1 or arr2
+      for i in arr1:
+            for j in arr2:
+                  if(i==j):
+                        intersection.append(i)
+      return intersection
+#from the signature of the object we could get its or their coordinate
+#Like the green ball or the large box, (quantifier,size,color,form) is signature
+def signature2position(signature):
+      coordinate=[]
+      if(signature=="floor"):
+            coordinate=list(d_world[-1])
+            return coordinate
+      sig=signature.split(" ")
+      quantifier=sig[0]
+      
+      form=sig[-1]
+      #since when quantifier is all the word of object is plural like all boxes,then d_world[2].get("boxes") will return null
+      #so that we just for all keys in d_world[2] we check whether they are similar like boxes.contain(box)
+      if(quantifier=="all"):
+            for f in d_world[2].keys():
+                  if(form.find(f)>=0):
+                        coordinate=d_world[2].get(f)
+      else:
+            coordinate=d_world[2].get(form)
+      for i in sig[1:-1]:
+            s=d_world[0].get(i,"")
+            c=d_world[1].get(i,"") 
+            coordinate=intersect((s=="" and c or s),coordinate)
+      return coordinate
+#we use coordinate to discribe the world
+def digitalize_the_world(world,objects):
+      col=0
+      digital_world=[{},{},{},[]]
+      #first dictionary contains  the coordinate of specific size
+      digital_world[0]={}
+      #second dictionary contains  the coordinate of specific color
+      digital_world[1]={}
+      #third dictionary contains the coordinate of specific form 
+      digital_world[2]={}
+      #last dictionary contains the coordinate of the floor.we assume they are (i,0)
+      digital_world[3]=[]
+      for w in world:
+          row=0
+          col=col+1
+          digital_world[3].append(str(col)+","+"0")
+          for j in w:
+              row=row+1
+              for object in objects:
+                  o=objects[object]
+                  if(object==j):
+                      tempt=digital_world[0].get(o["size"],[ ])
+                      tempt.append((str(col)+","+str(row)))
+                      digital_world[0][o["size"]]=tempt
+
+                      tempt=digital_world[1].get(o["color"],[ ])
+                      tempt.append((str(col)+","+str(row))) 
+                      digital_world[1][o["color"]]=tempt
+
+                      tempt=digital_world[2].get(o["form"],[ ])
+                      tempt.append((str(col)+","+str(row)))
+                      digital_world[2][o["form"]]=tempt
+      
+      return digital_world
+
+#get the coordinate of location like location:on the green box.
+#we will return(coordinate(green box).x,coordnate(green box).y+1)
+def deal_with_location(location):
+     location_relation=location[0]
+     location_entity=location[1]
+     entity_position=deal_with_entity(location_entity)
+      
+     return deal_with_relation(location_relation.node["sem"],entity_position)
+
+def deal_with_entity(entity):
+     category_entity=len(entity)
+      
+     if(category_entity==1):
+           ent_position=signature2position(entity.node["sem"])
+           #if the coordinate is null then we could just exit and notify users that object does not exist
+           if(len(ent_position)==0):
+                 print entity.node["sem"]+" does not exist in the world"
+                 sys.exit(0)
+
+           return  ent_position
+     elif(category_entity==2):
+           quantifier=entity[0].node["sem"]
+           object=""
+
+           for i in entity[1]:
+                object=object+" "+i[0]
+           
+           signature=quantifier+object
+
+           ent_position=signature2position(signature)
+
+           if(len(ent_position)==0):
+                 print signature+" does not exist in  the world"
+                 sys.exit(0)
+
+           return ent_position
+      
+     elif(category_entity==4):
+           quantifier=entity[0].node["sem"]
+           object=""
+
+           for i in entity[1]:
+                object=object+" "+i[0]
+           signature=quantifier+object
+
+           basic_object_position=signature2position(signature)
+        
+           if(len(basic_object_position)==0):
+                 print  signature+" does not exist in the world"
+                 sys.exit(0)
+
+                
+           location=entity[3]
+          
+           rel_position=deal_with_location(location)
+            
+           compound_object=intersect(basic_object_position,rel_position)
+           #check whether the relation exist between to object
+           #like the green box on the red table.But there are no green box on the red table.
+           if(len(compound_object)==0):
+                 print "relation  between "+str(basic_object_position) +" and "+str(rel_position)+" does not exist"
+                 sys.exit(0)
+             
+           return compound_object
+def put(put_command):
+     location=put_command[2]
+     position_of_target=deal_with_location(location)
+     result["original_position"]="it"
+     result["target_position"]=position_of_target
+     result["proposition"]=location[0] 
+def move(move_command):
+     entity=move_command[1]
+      
+     position_of_entity=deal_with_entity(entity)
+
+      
+     location=move_command[2]
+
+     position_of_target=deal_with_location(location)
+
+     result["original_position"]=position_of_entity
+     result["target_position"]=position_of_target
+     #backup
+     result["proposition"]=location[0]
+
+def take(take_command):
+      entity=take_command[1]
+      position_of_entity=deal_with_entity(entity) 
+      result["original_position"]=position_of_entity
+#the result contains  original position of the object and the position that i want to be moved to
+#So we could check the whether this is possible and how to do this according to this two positions      
+def interpret(tree):
+        result.clear()
+	opt_will_you=tree[0]
+	opt_please=tree[1]
+	basic_command=tree[2]
+	action=basic_command.node["sem"][0]
+	result["action"]=action
+	if(action=="make"):
+		make(tree[2])
+	elif(action=="put"):
+		put(tree[2])
+	elif(action=="move"):
+		move(tree[2])
+	else:
+		print "error"
+	
+         
+        return dict(result)
+       
+def main():
+     grammar=nltk.data.load("file:shrdlite_grammar.fcfg",cache=False) 
+     parser=nltk.FeatureChartParser(grammar)
+     sentence="move the ball in a box on the floor"
+     sentence=sentence.split()
+     #content of function parse
+     do_parse = getattr(parser, 'nbest_parse', 
+                       getattr(parser, 'parse_all', parser.parse))
+     trees=do_parse(sentence)
+     #content of function parse 
+     goals=[interpret(tree) for tree in trees]
+     #deal with ambuiguity
+     question=[]
+     action=goals[0].get("action")
+     if(len(goals)>1):   
+           for g in goals:
+                 s=g.get("original_position",[])
+                 d=g.get("target_position",[])
+                 d=deal_with_relation("under",d)
+                
+                 question.append(str(realize_the_world(s,world,world_objects))+" on "+str(realize_the_world(d,world,world_objects)))
+     print "Would u like to "
+     print  action
+     print  question[0]
+     print  " or "
+     print  question[1]             
+if __name__=="__main__":
+      f=file("medium.json")
+      json_data=json.load(f)
+      world_objects=json_data["objects"]
+      world=json_data["world"]
+      d_world=digitalize_the_world(world,world_objects)
+      main()
